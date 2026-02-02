@@ -92,6 +92,17 @@ streamlit run dashboard/app.py
 
 Navigate to `http://localhost:8501` to view the dashboard.
 
+#### One-command launcher (single terminal)
+
+To run all five components in one terminal with prefixed logs:
+
+```bash
+# After steps 1–3 above (Docker, init_db, create_topics)
+python scripts/run_all.py
+```
+
+Press **Ctrl+C** to stop all components. Dashboard: `http://localhost:8501`.
+
 #### Production Setup (With Real API Keys)
 
 ```bash
