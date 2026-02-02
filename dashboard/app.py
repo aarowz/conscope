@@ -236,9 +236,9 @@ def main():
     st.sidebar.header("📊 Dashboard Controls")
     
     # Auto-refresh toggle
-    auto_refresh = st.sidebar.checkbox("Auto-refresh (30s)", value=False)
+    auto_refresh = st.sidebar.checkbox("Auto-refresh (10s)", value=False)
     if auto_refresh:
-        time.sleep(30)
+        time.sleep(10)
         st.rerun()
     
     # Time range selector
