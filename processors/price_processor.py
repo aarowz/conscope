@@ -15,6 +15,7 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
 import json
 from dotenv import load_dotenv
+from kafka_setup.config import get_optimal_compression_type
 
 load_dotenv()
 
@@ -65,12 +66,15 @@ class PriceProcessor:
         )
         
         # Kafka producers (publish to processed_prices and price_alerts)
+        # Use optimal compression (snappy if available, else gzip)
+        optimal_compression = get_optimal_compression_type()
+        
         self.processed_producer = KafkaProducer(
             bootstrap_servers=kafka_broker,
             value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8'),
             acks='all',
             retries=3,
-            compression_type='snappy'
+            compression_type=optimal_compression
         )
         
         self.alerts_producer = KafkaProducer(
@@ -78,7 +82,7 @@ class PriceProcessor:
             value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8'),
             acks='all',
             retries=3,
-            compression_type='snappy'
+            compression_type=optimal_compression
         )
         
         # In-memory cache: {listing_key: last_price_info}

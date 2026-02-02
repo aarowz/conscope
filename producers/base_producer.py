@@ -13,6 +13,7 @@ from datetime import datetime
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 import json
+from kafka_setup.config import get_optimal_compression_type
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,14 +53,14 @@ class BaseProducer(ABC):
         self.poll_interval = poll_interval
         self.topic_name = topic_name
         
-        # Initialize Kafka producer
+        # Initialize Kafka producer with optimal compression (snappy if available, else gzip)
         self.producer = KafkaProducer(
             bootstrap_servers=kafka_broker,
             value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8'),
             acks='all',  # Wait for all replicas to acknowledge
             retries=3,
             max_in_flight_requests_per_connection=1,  # Ensure ordering
-            compression_type='snappy',
+            compression_type=get_optimal_compression_type(),
             batch_size=16384,  # 16KB batches
             linger_ms=10  # Wait up to 10ms for batching
         )
