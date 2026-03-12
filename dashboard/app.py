@@ -14,7 +14,6 @@ import psycopg2
 from psycopg2 import pool
 import os
 from dotenv import load_dotenv
-import time
 
 load_dotenv()
 
@@ -173,13 +172,15 @@ def get_recent_alerts(limit: int = 20):
         put_db_connection(conn)
 
 
-def get_price_stats(event_id: str = None):
-    """Get price statistics."""
+def get_price_stats(event_id: str = None, hours: int = 48):
+    """Get price statistics for the selected time window."""
     conn = get_db_connection()
     if not conn:
         return {}
     
     try:
+        cursor = conn.cursor()
+        interval_str = f"{hours} hours"
         if event_id:
             query = """
                 SELECT 
@@ -190,10 +191,9 @@ def get_price_stats(event_id: str = None):
                     COUNT(DISTINCT source) as num_sources
                 FROM price_history
                 WHERE event_id = %s
-                AND timestamp >= NOW() - INTERVAL '48 hours'
+                AND timestamp >= NOW() - %s::interval
             """
-            cursor = conn.cursor()
-            cursor.execute(query, [event_id])
+            cursor.execute(query, [event_id, interval_str])
         else:
             query = """
                 SELECT 
@@ -203,10 +203,9 @@ def get_price_stats(event_id: str = None):
                     MAX(price) as max_price,
                     COUNT(DISTINCT source) as num_sources
                 FROM price_history
-                WHERE timestamp >= NOW() - INTERVAL '48 hours'
+                WHERE timestamp >= NOW() - %s::interval
             """
-            cursor = conn.cursor()
-            cursor.execute(query)
+            cursor.execute(query, [interval_str])
         result = cursor.fetchone()
         cursor.close()
         
@@ -226,184 +225,176 @@ def get_price_stats(event_id: str = None):
         put_db_connection(conn)
 
 
-def main():
-    """Main dashboard application."""
-    # Header
-    st.title("🎫 ConScope - Real-Time Ticket Price Monitor")
-    st.markdown("---")
+def get_top_price_drops(hours: int = 24, limit: int = 6, event_id: str = None, venue: str = None):
+    """Get top price drops using the price_drop_alerts table."""
+    conn = get_db_connection()
+    if not conn:
+        return pd.DataFrame()
     
-    # Sidebar
-    st.sidebar.header("📊 Dashboard Controls")
-    
-    # Auto-refresh toggle
-    auto_refresh = st.sidebar.checkbox("Auto-refresh (10s)", value=False)
-    if auto_refresh:
-        time.sleep(10)
-        st.rerun()
-    
-    # Time range selector
-    hours = st.sidebar.selectbox(
-        "Time Range",
-        [6, 12, 24, 48, 72, 168],
-        index=3,  # Default to 48 hours
-        help="Show data from the last N hours"
-    )
-    
-    # Event selector
-    events_df = get_events()
-    if not events_df.empty:
-        event_options = ["All Events"] + events_df['event_name'].tolist()
-        selected_event = st.sidebar.selectbox("Select Event", event_options)
-        event_id = None if selected_event == "All Events" else events_df[events_df['event_name'] == selected_event]['event_id'].iloc[0] if selected_event in events_df['event_name'].values else None
-    else:
-        selected_event = "All Events"
-        event_id = None
-    
-    # Main content
-    if events_df.empty:
-        st.warning("⚠️ No events found in database. Start a producer to begin tracking prices.")
-        return
-    
-    # Statistics cards
-    st.subheader(f"📈 Price Statistics (Last {hours} Hours)")
-    stats = get_price_stats(event_id)
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total Listings", f"{stats.get('total_listings', 0):,}")
-    
-    with col2:
-        avg_price = stats.get('avg_price', 0)
-        st.metric("Average Price", f"${avg_price:.2f}" if avg_price > 0 else "N/A")
-    
-    with col3:
-        min_price = stats.get('min_price', 0)
-        st.metric("Lowest Price", f"${min_price:.2f}" if min_price > 0 else "N/A")
-    
-    with col4:
-        max_price = stats.get('max_price', 0)
-        st.metric("Highest Price", f"${max_price:.2f}" if max_price > 0 else "N/A")
-    
-    with col5:
-        st.metric("Sources", stats.get('num_sources', 0))
-    
-    st.markdown("---")
-    
-    # Price history chart
-    st.subheader("📊 Price History")
-    price_df = get_price_history(event_id, hours)
-    
-    if not price_df.empty:
-        # Price over time chart
-        price_df['timestamp'] = pd.to_datetime(price_df['timestamp'])
-        price_df = price_df.sort_values('timestamp')
-        
-        # Group by timestamp and source for cleaner chart
-        chart_df = price_df.groupby(['timestamp', 'source'])['price'].mean().reset_index()
-        
-        fig = px.line(
-            chart_df,
-            x='timestamp',
-            y='price',
-            color='source',
-            title=f"Average Price Over Time ({hours}h)",
-            labels={'price': 'Price ($)', 'timestamp': 'Time'},
-            markers=True
-        )
-        fig.update_layout(height=400, hovermode='x unified')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Price distribution by source
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            source_price_df = price_df.groupby('source')['price'].agg(['mean', 'min', 'max']).reset_index()
-            source_price_df.columns = ['Source', 'Average', 'Minimum', 'Maximum']
-            st.dataframe(source_price_df, use_container_width=True)
-        
-        with col2:
-            # Price distribution histogram
-            fig_hist = px.histogram(
-                price_df,
-                x='price',
-                color='source',
-                title="Price Distribution",
-                labels={'price': 'Price ($)', 'count': 'Frequency'},
-                nbins=30
-            )
-            fig_hist.update_layout(height=300)
-            st.plotly_chart(fig_hist, use_container_width=True)
-    else:
-        st.info("No price data available for the selected time range.")
-    
-    st.markdown("---")
-    
-    # Recent alerts
-    st.subheader("🚨 Recent Price Drop Alerts")
-    alerts_df = get_recent_alerts(limit=20)
-    
-    if not alerts_df.empty:
-        # Filter by selected event if applicable
+    try:
+        interval_str = f"{hours} hours"
+        query = """
+            SELECT 
+                a.alert_id,
+                a.event_id,
+                e.event_name,
+                e.venue,
+                a.section,
+                a.row,
+                a.seat,
+                a.old_price,
+                a.new_price,
+                a.drop_amount,
+                a.drop_percent,
+                a.source,
+                a.alert_timestamp,
+                a.listing_url
+            FROM price_drop_alerts a
+            JOIN events e ON a.event_id = e.event_id
+            WHERE a.alert_timestamp >= NOW() - %s::interval
+        """
+        params = [interval_str]
         if event_id:
-            alerts_df = alerts_df[alerts_df['event_id'] == event_id]
-        
-        # Format alerts for display
-        display_alerts = alerts_df[[
-            'event_name', 'venue', 'section', 'row', 'seat',
-            'old_price', 'new_price', 'drop_amount', 'drop_percent',
-            'source', 'alert_timestamp'
-        ]].copy()
-        
-        display_alerts.columns = [
-            'Event', 'Venue', 'Section', 'Row', 'Seat',
-            'Old Price', 'New Price', 'Drop ($)', 'Drop (%)',
-            'Source', 'Time'
-        ]
-        
-        # Format prices
-        display_alerts['Old Price'] = display_alerts['Old Price'].apply(lambda x: f"${x:.2f}")
-        display_alerts['New Price'] = display_alerts['New Price'].apply(lambda x: f"${x:.2f}")
-        display_alerts['Drop ($)'] = display_alerts['Drop ($)'].apply(lambda x: f"${x:.2f}")
-        display_alerts['Drop (%)'] = display_alerts['Drop (%)'].apply(lambda x: f"{x:.1f}%")
-        
-        # Format timestamp
-        display_alerts['Time'] = pd.to_datetime(display_alerts['Time']).dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-        st.dataframe(display_alerts, use_container_width=True, hide_index=True)
-        
-        # Alerts chart
-        alerts_df['alert_timestamp'] = pd.to_datetime(alerts_df['alert_timestamp'])
-        alerts_by_time = alerts_df.groupby(alerts_df['alert_timestamp'].dt.floor('H')).size().reset_index()
-        alerts_by_time.columns = ['Time', 'Alerts']
-        
-        fig_alerts = px.bar(
-            alerts_by_time,
-            x='Time',
-            y='Alerts',
-            title="Price Drop Alerts Over Time",
-            labels={'Alerts': 'Number of Alerts', 'Time': 'Time'}
+            query += " AND a.event_id = %s"
+            params.append(event_id)
+        if venue:
+            query += " AND e.venue = %s"
+            params.append(venue)
+        query += """
+            ORDER BY a.drop_percent DESC
+            LIMIT %s
+        """
+        params.append(limit)
+        df = pd.read_sql_query(query, conn, params=params)
+        return df
+    except Exception as e:
+        st.error(f"Error fetching top price drops: {e}")
+        return pd.DataFrame()
+    finally:
+        put_db_connection(conn)
+
+
+def render_hero_filters(events_df: pd.DataFrame):
+    """Render hero search/filters and return selected filters."""
+    # Hero heading + central search bar (ticketdata-style)
+    st.markdown(
+        "<h1 style='text-align:center; font-size:2.4rem; margin-bottom:1rem;'>"
+        "Track Ticket Prices for Your Favorite Events"
+        "</h1>",
+        unsafe_allow_html=True,
+    )
+
+    # Styling for hero search bar (pill-shaped, prominent)
+    st.markdown(
+        """
+        <style>
+        input[placeholder="Team, Artist, or Venue"] {
+            border-radius: 999px;
+            padding: 0.75rem 1.25rem;
+            font-size: 1rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Central search bar with width similar to ticketdata hero
+    left_pad, center_col, right_pad = st.columns([1.5, 3, 1.5])
+    with center_col:
+        search_query = st.text_input(
+            "",
+            value=st.session_state.get("hero_search_query", ""),
+            placeholder="Team, Artist, or Venue",
+            label_visibility="collapsed",
         )
-        fig_alerts.update_layout(height=300)
-        st.plotly_chart(fig_alerts, use_container_width=True)
+
+    st.session_state["hero_search_query"] = search_query
+
+    # Optionally filter events shown in the Event dropdown based on search
+    if not events_df.empty and search_query:
+        events_for_select = events_df[
+            events_df["event_name"].str.contains(search_query, case=False, na=False)
+        ]
+        # If no matches, fall back to all events
+        if events_for_select.empty:
+            events_for_select = events_df
     else:
-        st.info("No price drop alerts yet. Alerts will appear here when prices drop.")
-    
+        events_for_select = events_df
+
+    # For now, skip additional filters below the search bar
+    location = "All locations"
+    hours = st.session_state.get("hero_hours", 48)
+    event_id = None
+
+    # Persist defaults in session state for other sections
+    st.session_state["hero_location"] = location
+    st.session_state["hero_hours"] = hours
+    st.session_state["hero_event_name"] = "All events"
+    st.session_state["hero_event_id"] = event_id
+
+    return location, hours, event_id
+
+
+def render_top_price_drops(hours: int, event_id: str, location: str):
+    """Render Top Price Drops section."""
     st.markdown("---")
-    
-    # Footer
+    st.subheader("🚨 Top Price Drops")
+
+    venue_filter = None
+    if location and location != "All locations":
+        venue_filter = location
+
+    drops_df = get_top_price_drops(hours=hours, limit=6, event_id=event_id, venue=venue_filter)
+    if drops_df.empty:
+        st.info("No recent price drops in the selected window.")
+        return
+
+    cols = st.columns(3)
+    for idx, (_, row) in enumerate(drops_df.iterrows()):
+        col = cols[idx % 3]
+        with col:
+            st.markdown(
+                f"**{row['event_name']}**  \n"
+                f"{row['venue']}  \n"
+                f"Section {row['section']}, Row {row['row']}, Seat {row['seat']}"
+            )
+            # Image placeholder between seat info and price line
+            st.image(
+                "https://via.placeholder.com/320x180?text=Event+Image",
+                use_column_width=True,
+            )
+            st.write(
+                f"Old: ${row['old_price']:.2f} → New: ${row['new_price']:.2f} "
+                f"(**-{row['drop_amount']:.2f} / {row['drop_percent']:.1f}%**)"
+            )
+            st.caption(
+                f"Source: {row['source']} • "
+                f"{pd.to_datetime(row['alert_timestamp']).strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            if row.get("listing_url"):
+                st.markdown(f"[View listing]({row['listing_url']})")
+
+
+def render_detail_view(events_df: pd.DataFrame, event_id: str, hours: int):
+    """Deprecated: detailed view removed from main layout."""
+    return None
+
+
+def render_status_footer(events_df: pd.DataFrame, price_df: pd.DataFrame, hours: int):
+    """Render compact system status footer."""
+    st.markdown("---")
     st.markdown("### 📝 System Status")
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         st.write("**Database:** Connected ✅")
-    
+
     with col2:
         total_events = len(events_df)
         st.write(f"**Tracked Events:** {total_events}")
-    
+
     with col3:
-        if not price_df.empty:
+        if price_df is not None and not price_df.empty:
             latest_update = price_df['timestamp'].max()
             if pd.notna(latest_update):
                 st.write(f"**Latest Update:** {latest_update.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -422,6 +413,73 @@ def main():
                     pass
                 finally:
                     put_db_connection(conn)
+
+
+def render_dashboard_controls():
+    """Render dashboard controls (auto-refresh, etc.) in the main area. Call at end of page."""
+    st.markdown("---")
+    st.markdown("### 📊 Dashboard Controls")
+
+    query_params = st.experimental_get_query_params()
+    refresh_param = query_params.get("refresh", [None])[0] if query_params.get("refresh") else None
+    if "auto_refresh" not in st.session_state:
+        st.session_state.auto_refresh = (refresh_param == "10")
+
+    auto_refresh = st.checkbox(
+        "Auto-refresh (10s)",
+        value=st.session_state.auto_refresh,
+        key="auto_refresh_cb",
+    )
+    st.session_state.auto_refresh = auto_refresh
+
+    if auto_refresh and refresh_param != "10":
+        st.experimental_set_query_params(refresh="10")
+        st.rerun()
+    if not auto_refresh and refresh_param == "10":
+        st.experimental_set_query_params()
+        st.rerun()
+    if auto_refresh:
+        st.components.v1.html(
+            """
+            <script>
+            setTimeout(function() {
+                var url = new URL(window.parent.location.href);
+                url.searchParams.set('refresh', '10');
+                window.parent.location.href = url.toString();
+            }, 10000);
+            </script>
+            <span style="font-size:12px;color:#888;">Refreshing in 10s…</span>
+            """,
+            height=28,
+        )
+
+
+def main():
+    """Main dashboard application."""
+    # Load events once for the page
+    events_df = get_events()
+
+    # Logo and branding at top left
+    logo_col, _ = st.columns([1, 5])
+    with logo_col:
+        st.markdown(
+            "<span style='font-size:1.8rem; font-weight:700;'>🎫 ConScope</span>",
+            unsafe_allow_html=True,
+        )
+    # Hero filters (header-style controls)
+    location, hours, event_id = render_hero_filters(events_df)
+
+    # Highlights & quick views
+    render_top_price_drops(hours=hours, event_id=event_id, location=location)
+
+    # Detailed view removed; keep price_df for status footer as None
+    price_df = None
+
+    # Status footer
+    render_status_footer(events_df, price_df, hours)
+
+    # Dashboard controls (last section)
+    render_dashboard_controls()
 
 
 if __name__ == "__main__":
