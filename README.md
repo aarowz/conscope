@@ -47,7 +47,14 @@ cd conscope
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Activate virtual environment
+# macOS/Linux:
+source venv/bin/activate
+# Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+# Windows (Command Prompt):
+venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -61,7 +68,7 @@ cp .env.example .env
 
 #### Quick Start (Using Mock Producer)
 
-For testing without API keys:
+For testing without API keys, use the one-command launcher:
 
 ```bash
 # 1. Start infrastructure
@@ -73,24 +80,24 @@ python scripts/init_db.py
 # 3. Create Kafka topics
 python kafka_setup/create_topics.py
 
-# 4. Start all components (in separate terminals)
-# Terminal 1: Storage Consumer
-python -m consumers.storage_consumer
-
-# Terminal 2: Price Processor
-python -m processors.price_processor
-
-# Terminal 3: Alert Consumer
-python -m consumers.alert_consumer
-
-# Terminal 4: Mock Producer (generates test data)
-python -m producers.mock_producer
-
-# Terminal 5: Dashboard
-streamlit run dashboard/app.py
+# 4. Start everything (single terminal)
+python scripts/run_all.py
 ```
 
-Navigate to `http://localhost:8501` to view the dashboard.
+This starts storage consumer, processor, alert consumer, mock producer, and dashboard.
+Open `http://localhost:8501` to view the app.
+
+Press **Ctrl+C** to stop all components.
+
+#### Optional: Backend only (dashboard separate)
+
+```bash
+# Start backend components only
+python scripts/run_all.py --no-dashboard
+
+# In another terminal, start dashboard
+streamlit run dashboard/app.py
+```
 
 #### Production Setup (With Real API Keys)
 

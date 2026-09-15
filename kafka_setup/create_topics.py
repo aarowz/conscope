@@ -24,7 +24,7 @@ KAFKA_TOPICS = {
         "configs": {
             "cleanup.policy": "delete",
             "retention.ms": "604800000",  # 7 days
-            "compression.type": "snappy"
+            "compression.type": "gzip"
         }
     },
     "processed_prices": {
@@ -33,7 +33,7 @@ KAFKA_TOPICS = {
         "configs": {
             "cleanup.policy": "delete",
             "retention.ms": "2592000000",  # 30 days
-            "compression.type": "snappy"
+            "compression.type": "gzip"
         }
     },
     "price_alerts": {
@@ -42,7 +42,7 @@ KAFKA_TOPICS = {
         "configs": {
             "cleanup.policy": "delete",
             "retention.ms": "86400000",  # 1 day
-            "compression.type": "snappy"
+            "compression.type": "gzip"
         }
     },
     "system_metrics": {
