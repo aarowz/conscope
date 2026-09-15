@@ -1,6 +1,6 @@
 {
   "setupScript": "python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt",
-  "runScript": "source venv/bin/activate && docker compose up -d && python scripts/init_db.py && python kafka_setup/create_topics.py && (python -m consumers.storage_consumer & python -m processors.price_processor & python -m consumers.alert_consumer & python -m producers.mock_producer & trap 'kill $(jobs -p) 2>/dev/null' EXIT; streamlit run dashboard/app.py)",
+  "runScript": "source venv/bin/activate && docker compose up -d && python scripts/init_db.py && python kafka_setup/create_topics.py && python scripts/run_all.py",
   "archiveScript": "docker compose down",
   "copyIgnoredOnWorktreeCreate": true
 }
