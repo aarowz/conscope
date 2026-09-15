@@ -1,12 +1,11 @@
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
-    container_name: conscope-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "${ZOOKEEPER_PORT:-2181}:2181"
     networks:
       - conscope-network
     healthcheck:
@@ -17,17 +16,16 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    container_name: conscope-kafka
     depends_on:
       zookeeper:
         condition: service_healthy
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - "${KAFKA_PORT:-9092}:9092"
+      - "${KAFKA_INTERNAL_PORT:-9093}:9093"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${KAFKA_PORT:-9092},PLAINTEXT_INTERNAL://kafka:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -50,14 +48,13 @@ services:
 
   postgres:
     image: postgres:15-alpine
-    container_name: conscope-postgres
     environment:
       POSTGRES_DB: conscope
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -71,12 +68,11 @@ services:
   # Kafka UI for debugging and monitoring
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
-    container_name: conscope-kafka-ui
     depends_on:
       - kafka
       - zookeeper
     ports:
-      - "8080:8080"
+      - "${KAFKA_UI_PORT:-8080}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
