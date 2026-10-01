@@ -5,6 +5,7 @@ ConScope Dashboard - Streamlit Application
 Real-time dashboard for monitoring ticket prices, alerts, and system metrics.
 """
 
+import sys
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -14,6 +15,14 @@ import psycopg2
 from psycopg2 import pool
 import os
 from dotenv import load_dotenv
+
+# Add parent directory to path so `producers` is importable when Streamlit
+# runs this file directly (it only puts dashboard/ on sys.path by default).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from producers.ticketmaster_discovery import discover_events
+from producers.events_store import upsert_event
+from producers.config import TICKETMASTER_API_KEY, TICKETMASTER_BASE_URL
 
 load_dotenv()
 
@@ -52,6 +61,7 @@ def render_home_logo(button_key: str):
         _clear_query_param("event_id")
         _clear_query_param("search")
         st.session_state.pop("active_search_query", None)
+        st.session_state.pop("active_event_id", None)
         st.session_state["active_page"] = "home"
         st.rerun()
 
@@ -424,8 +434,8 @@ def get_getin_price_series(event_id: str, hours: int = None):
         put_db_connection(conn)
 
 
-def search_events(query: str, limit: int = 200):
-    """Search events by name, venue, city, or state."""
+def _search_events_local(query: str, limit: int = 200):
+    """Search already-tracked events by name, venue, city, or state."""
     conn = get_db_connection()
     if not conn:
         return pd.DataFrame()
@@ -447,6 +457,29 @@ def search_events(query: str, limit: int = 200):
         return pd.DataFrame()
     finally:
         put_db_connection(conn)
+
+
+def search_events(query: str, limit: int = 200):
+    """
+    Search events by name, venue, city, or state.
+
+    Falls back to a live Ticketmaster keyword search when nothing locally
+    tracked matches, so searching for an artist/venue that isn't tracked yet
+    (e.g. no one has searched for it before) still returns results. Any hits
+    are persisted immediately and picked up by the producer's next poll cycle.
+    """
+    local = _search_events_local(query, limit)
+    if not local.empty or not TICKETMASTER_API_KEY:
+        return local
+
+    discovered = discover_events(query, TICKETMASTER_API_KEY, TICKETMASTER_BASE_URL)
+    if not discovered:
+        return local
+
+    for event in discovered:
+        upsert_event(event)
+
+    return _search_events_local(query, limit)
 
 
 def get_event_last_updated(event_id: str):
@@ -590,20 +623,25 @@ def render_search_results_page(search_query: str):
         return
 
     st.caption(f"Showing {len(filtered)} event(s)")
-    st.markdown("---")
+    render_events_table(filtered, key_prefix="search")
 
+
+def render_events_table(df: pd.DataFrame, key_prefix: str = "events"):
+    """Render the shared event rows table (Event/Date/Performer/Venue/City/Change/Get-In/Updated)."""
+    st.markdown("---")
     header_cols = st.columns([2.3, 1.7, 2.0, 1.8, 1.0, 1.2, 1.3, 1.4])
     headers = ["Event", "Date", "Performer", "Venue", "City", "3 Day Change", "Get-In", "Last Updated"]
     for col, label in zip(header_cols, headers):
         col.markdown(f"**{label}**")
 
-    for _, row in filtered.iterrows():
+    for _, row in df.iterrows():
         eid = str(row.get("event_id", ""))
         current_getin = get_current_getin(eid, lookback_hours=24) if eid else None
         change_3d = get_getin_change_3d(eid) if eid else None
         change_text = f"{change_3d[2]:+.1f}%" if change_3d is not None else "—"
         updated_text = format_relative_time(get_event_last_updated(eid)) if eid else "—"
-        date_text = row["event_date"].strftime("%a, %m/%d/%Y %I:%M %p") if pd.notna(row["event_date"]) else "—"
+        event_date = pd.to_datetime(row.get("event_date"), errors="coerce")
+        date_text = event_date.strftime("%a, %m/%d/%Y %I:%M %p") if pd.notna(event_date) else "—"
         city_text = row.get("city") if pd.notna(row.get("city")) and row.get("city") else "TBD"
         venue_text = row.get("venue") or "TBD"
         performer_text = derive_performer_name(row.get("event_name"))
@@ -619,9 +657,10 @@ def render_search_results_page(search_query: str):
         cols[6].write(getin_text)
         cols[7].write(updated_text)
 
-        if eid and st.button("View details", key=f"search_view_details_{eid}"):
+        if eid and st.button("View details", key=f"{key_prefix}_view_details_{eid}"):
             _set_query_params({"event_id": eid})
             st.session_state["active_page"] = "detail"
+            st.session_state["active_event_id"] = eid
             st.rerun()
 
         st.caption(f"Last updated: {updated_text}")
@@ -779,6 +818,8 @@ def render_event_detail_page(event_id: str):
         st.warning("Event not found.")
         if st.button("← Back to home"):
             _clear_query_param("event_id")
+            st.session_state.pop("active_event_id", None)
+            st.session_state["active_page"] = "home"
             st.rerun()
         return
 
@@ -792,6 +833,8 @@ def render_event_detail_page(event_id: str):
     # --- Back to home ---
     def go_home():
         _clear_query_param("event_id")
+        st.session_state.pop("active_event_id", None)
+        st.session_state["active_page"] = "home"
         st.rerun()
 
     if st.button("← Back to home", key="back_top"):
@@ -943,6 +986,7 @@ def main():
     eid = _get_query_param("event_id")
     if eid:
         st.session_state["active_page"] = "detail"
+        st.session_state["active_event_id"] = str(eid)
         render_event_detail_page(str(eid))
         return
     search_query = _get_query_param("search")
@@ -950,6 +994,14 @@ def main():
         st.session_state["active_search_query"] = str(search_query)
         st.session_state["active_page"] = "search"
         render_search_results_page(str(search_query))
+        return
+    # Fallback to session state: on Streamlit <1.30 (no st.query_params),
+    # experimental_get_query_params() can miss the URL on a widget-triggered
+    # rerun (e.g. changing the detail page's time-range radio), so don't rely
+    # on the query param alone to stay on the detail/search page.
+    persisted_event_id = st.session_state.get("active_event_id")
+    if st.session_state.get("active_page") == "detail" and persisted_event_id:
+        render_event_detail_page(str(persisted_event_id))
         return
     persisted_search = st.session_state.get("active_search_query")
     if st.session_state.get("active_page") == "search" and persisted_search:
@@ -969,6 +1021,12 @@ def main():
 
     # Highlights & quick views
     render_top_price_drops(hours=hours, event_id=event_id, location=location)
+
+    st.subheader("🎟️ Tracked Events")
+    if events_df.empty:
+        st.info("No events tracked yet.")
+    else:
+        render_events_table(events_df, key_prefix="home")
 
     # Detailed view removed; keep price_df for status footer as None
     price_df = None

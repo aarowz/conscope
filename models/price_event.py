@@ -15,7 +15,7 @@ import json
 class PriceEvent:
     """
     Represents a ticket price event from a ticket source.
-    
+
     This is the standard format for all price data flowing through Kafka.
     """
     # Event identification
@@ -23,28 +23,28 @@ class PriceEvent:
     event_name: str            # e.g., "Taylor Swift - Eras Tour"
     venue: str                 # e.g., "MetLife Stadium"
     event_date: datetime       # When the concert happens
-    
+
     # Ticket details
     source: str                # "seatgeek", "ticketmaster", "stubhub", "vivid"
     section: str               # e.g., "Floor 2", "Section 101"
     row: str                   # e.g., "15", "A"
     seat: str                 # e.g., "8", "12-13"
-    
+
     # Price information
     price: float               # Current price in USD
     fees: Optional[float] = None      # Service fees (if available)
     total_price: float         # Price + fees
-    
+
     # Metadata
     timestamp: datetime        # When price was scraped
     listing_id: str            # Source-specific listing ID
     listing_url: str           # Link to listing
     quantity: int = 1         # Number of tickets (usually 1 or 2)
-    
+
     # Optional fields
     delivery_method: Optional[str] = None  # "mobile", "physical", "instant"
     seller_notes: Optional[str] = None      # Any special notes
-    
+
     def to_dict(self) -> dict:
         """Convert PriceEvent to dictionary for JSON serialization."""
         return {
@@ -66,11 +66,11 @@ class PriceEvent:
             "delivery_method": self.delivery_method,
             "seller_notes": self.seller_notes
         }
-    
+
     def to_json(self) -> str:
         """Convert PriceEvent to JSON string."""
         return json.dumps(self.to_dict(), default=str)
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'PriceEvent':
         """Create PriceEvent from dictionary."""
@@ -79,6 +79,5 @@ class PriceEvent:
             data['event_date'] = datetime.fromisoformat(data['event_date'].replace('Z', '+00:00'))
         if isinstance(data.get('timestamp'), str):
             data['timestamp'] = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
-        
-        return cls(**data)
 
+        return cls(**data)
