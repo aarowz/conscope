@@ -49,3 +49,12 @@ DEFAULT_EVENTS = [
     # }
 ]
 
+# Ticketmaster event tracking is fully dynamic: the dashboard's search box
+# discovers and tracks events live via the Discovery API's keyword search
+# (see producers/ticketmaster_discovery.py), persisted in the `events` table
+# (see producers/events_store.py). These two settings only control cold start
+# and how many events one producer polls per cycle, to stay under the API's
+# daily rate limit.
+TICKETMASTER_SEED_KEYWORD = os.getenv("TICKETMASTER_SEED_KEYWORD", "concert")
+TICKETMASTER_MAX_TRACKED_EVENTS = int(os.getenv("TICKETMASTER_MAX_TRACKED_EVENTS", "25"))
+

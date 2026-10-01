@@ -31,7 +31,7 @@ def get_commands(include_dashboard=True):
         ("storage", [python, "-m", "consumers.storage_consumer"]),
         ("processor", [python, "-m", "processors.price_processor"]),
         ("alerts", [python, "-m", "consumers.alert_consumer"]),
-        ("producer", [python, "-m", "producers.mock_producer"]),
+        ("producer", [python, "-m", "producers.ticketmaster_producer"]),
     ]
     if include_dashboard:
         commands.append(

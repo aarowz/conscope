@@ -196,23 +196,25 @@ class BaseProducer(ABC):
             logger.error(f"Error processing event {event.get('event_id')}: {e}")
             return 0
     
-    def run(self, events: List[Dict]):
+    def run(self, events):
         """
         Main polling loop.
-        
+
         Args:
-            events: List of event dictionaries to track
-                Each event should have: event_id, name, venue, date
+            events: List of event dicts to track, or a zero-arg callable returning
+                one. A callable is re-invoked every cycle, so the tracked set can
+                grow (e.g. from events discovered via a live search) without
+                restarting the producer. Each event dict needs: event_id, name,
+                venue, date.
         """
-        logger.info(
-            f"Starting {self.source_name} producer, tracking {len(events)} events"
-        )
-        
+        logger.info(f"Starting {self.source_name} producer")
+
         try:
             while True:
                 cycle_start = time.time()
-                
-                for event in events:
+
+                current_events = events() if callable(events) else events
+                for event in current_events:
                     self.process_event(event)
                 
                 # Log metrics periodically
